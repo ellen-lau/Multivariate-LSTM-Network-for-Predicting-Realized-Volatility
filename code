@@ -1,0 +1,94 @@
+import numpy as np
+import tensorflow as tf
+import keras as ks
+import matplotlib
+import pandas as pd
+
+data = pd.read_csv("Documents/RealAndImpliedVolatilities_CS3.csv")
+
+datareal = data[['date','real_vol']]
+dataimp = data[['date','imp_vol']]
+
+datareal = datareal.set_index('date')
+dataimp = dataimp.set_index('date')
+
+timesteps = 30
+
+#goal: to create a 1D numpy array filled with 1D numpy arrays of
+#      the past number of timesteps of implied volatility for
+#      sample (day)
+
+
+# 1. (1st parameter) number of samples  
+#    2507 - timesteps = total number of data samples (each date is a sample) - the top 30 rows of data that do not have previous
+#                                                                                  data samples to pull from
+# 2. (second parameter) number of timesteps
+#    timesteps + 1 = t-30 days and t = 31 days
+
+feat1arr = np.zeros(shape=(2507-1-timesteps, timesteps+1))
+feat2arr = np.zeros(shape=(2507-1-timesteps, timesteps+1))
+
+labelarr = np.zeros(shape=(2507-1-timesteps, 1))
+
+#run through data
+# range = 2507 - 1 -> indexer starts at 0
+
+for j in range(2507-1):
+
+    if j >= timesteps: 
+        
+        #list initialization to store t-30 (31 points) worth of data
+        sample1 = []
+        sample2 = []
+        
+        #access previous samples (num of timesteps) and put in array
+        for i in range(timesteps+1):
+   
+            sample1.append(dataimp['imp_vol'].shift(i).get_value(j,1))
+            sample2.append(datareal['real_vol'].shift(i).get_value(j,1)-dataimp['imp_vol'].shift(i).get_value(j,1))
+        
+        samplearray1 = np.array(sample1)
+        samplearray2 = np.array(sample2)
+        
+        feat1arr[j-timesteps] = samplearray1
+        feat2arr[j-timesteps] = samplearray2
+        labelarr[j-timesteps] = datareal['real_vol'].shift(-1).get_value(j,1) #1 days in the future
+        
+#stack arrays
+
+data_array = np.stack((feat1arr, feat2arr), axis = -1)
+
+split = int(2507*0.8)
+
+featTrain, featTest, labelTrain, labelTest = data_array[:split], data_array[split:], labelarr[:split], labelarr[split:]
+
+from keras.models import Sequential
+from keras.layers import LSTM
+from keras.layers.core import Dense, Dropout
+from keras import optimizers, regularizers
+
+model = Sequential()
+
+model.add(LSTM(50, return_sequences=True, input_shape=(timesteps+1,2)))
+model.add(Dropout(0.5))
+model.add(LSTM(100, return_sequences=False))
+model.add(Dropout(0.5))
+model.add(Dense(1, activation='linear'))
+
+opt = optimizers.Adam(clipnorm = 5.5)
+
+model.compile(loss='mse', optimizer = 'adam')
+
+
+model.fit(featTrain, labelTrain, epochs = 100, batch_size = 100)
+
+
+labelPredict = model.predict(featTest)
+
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize = (20,10))
+
+plt.plot(labelPredict, color = 'r', label = 'Predicted Volatility')
+plt.plot(labelTest, color = 'b', label = 'Real Volatility')
